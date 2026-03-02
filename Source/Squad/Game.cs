@@ -21,7 +21,7 @@ namespace squad_dma
         private ulong _gameInstance;
         private ulong _localPlayer;
         private ulong _playerController;
-        private Vector3D _absoluteLocation;
+        private Vector3D _worldOrigin;
         private string _currentLevel = string.Empty;
         private DateTime _lastTeamCheck = DateTime.MinValue;
         private const int TeamCheckInterval = 1000;
@@ -50,7 +50,7 @@ namespace squad_dma
         public string MapName => _currentLevel;
         public UActor LocalPlayer => _localUPlayer;
         public ReadOnlyDictionary<ulong, UActor> Actors => _actors?.Actors;
-        public Vector3D AbsoluteLocation => _absoluteLocation;
+        public Vector3D AbsoluteLocation => _worldOrigin;
         public Dictionary<int, int> TeamTickets => _gameTickets?.GetTickets();
         public GameTickets GameTickets => _gameTickets;
         public PlayerStats GameStats => _gameStats;
@@ -308,54 +308,39 @@ namespace squad_dma
                 var worldOriginPtr = _gameWorld + Offsets.World.WorldOrigin;
 
                 // World Origin (FVector)
-                cameraManagerRound.AddEntry<double>(0, 11, worldOriginPtr);      // World Origin X
-                cameraManagerRound.AddEntry<double>(0, 12, worldOriginPtr + 0x8);  // World Origin Y
-                cameraManagerRound.AddEntry<double>(0, 13, worldOriginPtr + 0x10); // World Origin Z
+                cameraManagerRound.AddEntry<Vector3D>(0, 11, worldOriginPtr);
 
                 // FMinimalViewInfo structure
                 // Location (0x0)
-                cameraInfoRound.AddEntry<double>(0, 14, povPtr + 0x0);  // X
-                cameraInfoRound.AddEntry<double>(0, 15, povPtr + 0x8);  // Y
-                cameraInfoRound.AddEntry<double>(0, 16, povPtr + 0x10); // Z
+                cameraInfoRound.AddEntry<Vector3D>(0, 12, povPtr + Offsets.FMinimalViewInfo.Location);
                 
                 // Rotation (0x18)
-                cameraInfoRound.AddEntry<double>(0, 17, povPtr + 0x18); // Pitch
-                cameraInfoRound.AddEntry<double>(0, 18, povPtr + 0x20); // Yaw
-                cameraInfoRound.AddEntry<double>(0, 19, povPtr + 0x28); // Roll
+                cameraInfoRound.AddEntry<Vector3D>(0, 13, povPtr + Offsets.FMinimalViewInfo.Rotation);
+
+                cameraInfoRound.AddEntry<float>(0, 14, povPtr + Offsets.FMinimalViewInfo.FOV);
 
                 cameraInfoScatterMap.Execute();
 
-                if (cameraInfoScatterMap.Results[0][11].TryGetResult<double>(out var absoluteX) &&
-                    cameraInfoScatterMap.Results[0][12].TryGetResult<double>(out var absoluteY) &&
-                    cameraInfoScatterMap.Results[0][13].TryGetResult<double>(out var absoluteZ))
+                if (cameraInfoScatterMap.Results[0][11].TryGetResult<Vector3D>(out var worldOrigin))
                 {
-                    _absoluteLocation = new Vector3D(absoluteX, absoluteY, absoluteZ);
+                    _worldOrigin = worldOrigin;
                 }
                 else
                 {
                     return false;
                 }
 
-                if (cameraInfoScatterMap.Results[0][14].TryGetResult<double>(out var x) &&
-                    cameraInfoScatterMap.Results[0][15].TryGetResult<double>(out var y) &&
-                    cameraInfoScatterMap.Results[0][16].TryGetResult<double>(out var z))
+                if (cameraInfoScatterMap.Results[0][12].TryGetResult<Vector3D>(out var location))
                 {
-                    _localUPlayer.Position = new Vector3D(
-                        x + _absoluteLocation.X,
-                        y + _absoluteLocation.Y,
-                        z + _absoluteLocation.Z
-                    );
+                    _localUPlayer.Position = location + _worldOrigin;
                 }
                 else
                 {
                     return false;
                 }
 
-                if (cameraInfoScatterMap.Results[0][17].TryGetResult<double>(out var rotX) &&
-                    cameraInfoScatterMap.Results[0][18].TryGetResult<double>(out var rotY) &&
-                    cameraInfoScatterMap.Results[0][19].TryGetResult<double>(out var rotZ))
+                if (cameraInfoScatterMap.Results[0][13].TryGetResult<Vector3D>(out var rotation))
                 {
-                    var rotation = new Vector3D(rotX, rotY, rotZ);
                     _localUPlayer.Rotation = new Vector2D(rotation.Y, rotation.X);
                     _localUPlayer.Rotation3D = rotation;
                 }
@@ -364,19 +349,14 @@ namespace squad_dma
                     return false;
                 }
 
-                //float screenWidth = Screen.PrimaryScreen.Bounds.Width;
-                //float screenHeight = Screen.PrimaryScreen.Bounds.Height;
-                //
-                //var viewInfo = new MinimalViewInfo
-                //{
-                //    Location = _localUPlayer.Position,
-                //    Rotation = _localUPlayer.Rotation3D,
-                //    FOV = CurrentFOV,
-                //    AspectRatio = screenWidth / screenHeight
-                //};
-                //
-                //Camera.Location = _localUPlayer.Position.ToVector3();
-                //Camera.ViewProjectionMatrix = Camera.CalculateViewProjectionMatrix(viewInfo);
+                if (cameraInfoScatterMap.Results[0][14].TryGetResult<float>(out var fov))
+                {
+                    _currentFOV = fov;
+                }
+                else
+                {
+                    return false;
+                }
 
                 Camera.Location = _localUPlayer.Position;
                 Camera.ViewportRect = new Vector2(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
@@ -411,33 +391,24 @@ namespace squad_dma
 
             string pawnClassName = Memory.GetActorClassName(pawnPtr);
             bool isInVehicle = !pawnClassName.Contains("BP_Soldier");
-            float cameraFOV = ReadCameraFOV();
 
             if (isInVehicle)
             {
-                _currentFOV = cameraFOV;
                 _isAimingDownSights = false;
                 _hasPipScope = false;
                 return true;
             }
 
-            return UpdateOnFootPlayerInfo(scatterMap, pawnPtr, cameraFOV);
+            return UpdateOnFootPlayerInfo(scatterMap, pawnPtr);
         }
 
-        private float ReadCameraFOV()
-        {
-            ulong cameraManagerPtr = Memory.ReadPtr(_playerController + Offsets.PlayerController.PlayerCameraManager);
-            return Memory.ReadValue<float>(cameraManagerPtr + Offsets.PlayerCameraManager.DefaultFOV);
-        }
-
-        private bool UpdateOnFootPlayerInfo(ScatterReadMap scatterMap, ulong pawnPtr, float cameraFOV)
+        private bool UpdateOnFootPlayerInfo(ScatterReadMap scatterMap, ulong pawnPtr)
         {
             ulong inventoryPtr = Memory.ReadPtr(pawnPtr + Offsets.ASQSoldier.InventoryComponent);
             if (inventoryPtr == 0)
             {
                 _isAimingDownSights = false;
                 _hasPipScope = false;
-                _currentFOV = cameraFOV;
                 return true;
             }
 
@@ -449,14 +420,13 @@ namespace squad_dma
             {
                 _isAimingDownSights = false;
                 _hasPipScope = false;
-                _currentFOV = cameraFOV;
                 return true;
             }
 
-            return UpdateWeaponInfo(scatterMap, weaponPtr, cameraFOV);
+            return UpdateWeaponInfo(scatterMap, weaponPtr);
         }
 
-        private bool UpdateWeaponInfo(ScatterReadMap scatterMap, ulong weaponPtr, float cameraFOV)
+        private bool UpdateWeaponInfo(ScatterReadMap scatterMap, ulong weaponPtr)
         {
             _currentWeaponPtr = weaponPtr;
 
@@ -469,20 +439,19 @@ namespace squad_dma
 
             _isAimingDownSights = scatterMap.Results[0][1].TryGetResult<byte>(out byte ads) && ads == 1;
             _hasPipScope = scatterMap.Results[0][2].TryGetResult<ulong>(out ulong pipScopePtr) && pipScopePtr != 0;
-            float weaponFOV = scatterMap.Results[0][3].TryGetResult<float>(out float currFOV) && currFOV > 5f && currFOV < 180f ? currFOV : cameraFOV;
+            float weaponFOV = scatterMap.Results[0][3].TryGetResult<float>(out float currFOV) ? currFOV : 0f;
             _isFiring = scatterMap.Results[0][4].TryGetResult<byte>(out byte firing) && firing == 1;
 
-            float finalFOV = cameraFOV;
             if (_isAimingDownSights)
             {
-                finalFOV = weaponFOV;
+                float finalFOV = weaponFOV;
                 if (_hasPipScope && pipScopePtr != 0)
                 {
                     UpdateScopeMagnification(pipScopePtr, weaponFOV, ref finalFOV);
                 }
+                _currentFOV = finalFOV;
             }
 
-            _currentFOV = finalFOV;
             return true;
         }
 

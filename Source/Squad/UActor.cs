@@ -1,6 +1,7 @@
 ﻿using SkiaSharp;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace squad_dma
 {
@@ -15,6 +16,26 @@ namespace squad_dma
             X = x;
             Y = y;
             Z = z;
+        }
+
+        public static Vector3D operator+(Vector3D left, Vector3D right)
+        {
+            return new Vector3D(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
+        }
+
+        public static Vector3D operator-(Vector3D left, Vector3D right)
+        {
+            return new Vector3D(left.X - right.X, left.Y - right.Y, left.Z - right.Z);
+        }
+
+        public static Vector3D operator*(Vector3D left, Vector3D right)
+        {
+            return new Vector3D(left.X * right.X, left.Y * right.Y, left.Z * right.Z);
+        }
+
+        public static Vector3D operator/(Vector3D left, Vector3D right)
+        {
+            return new Vector3D(left.X / right.X, left.Y / right.Y, left.Z / right.Z);
         }
 
         public static Vector3D Zero => new Vector3D(0, 0, 0);

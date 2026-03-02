@@ -112,6 +112,13 @@
         public const uint POV = 0x10; // FMinimalViewInfo
     }
 
+    public struct FMinimalViewInfo
+    {
+        public const uint Location = 0x0;
+        public const uint Rotation = 0x18;
+        public const uint FOV = 0x30;
+    }
+
     public struct UCameraShakeBase
     {
         public const uint bSingleInstance = 0x28; // bool
